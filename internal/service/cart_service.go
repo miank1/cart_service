@@ -2,6 +2,9 @@ package service
 
 import (
 	"bytes"
+	"cart-service/internal/models"
+	"cart-service/internal/repository"
+	"cart-service/pkg/config"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,9 +12,6 @@ import (
 	"net/http"
 	"os"
 	"time"
-
-	"ecommerce-backend/services/cartservice/internal/models"
-	"ecommerce-backend/services/cartservice/internal/repository"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -177,6 +177,7 @@ func (s *CartService) DeleteItem(itemID string) error {
 }
 
 func (s *CartService) Checkout(c *gin.Context, userID string) (map[string]interface{}, error) {
+
 	if _, err := uuid.Parse(userID); err != nil {
 		return nil, errors.New("invalid user id")
 	}
@@ -185,18 +186,32 @@ func (s *CartService) Checkout(c *gin.Context, userID string) (map[string]interf
 	if err != nil {
 		return nil, err
 	}
+
 	if cart == nil || len(cart.Items) == 0 {
 		return nil, errors.New("cart is empty")
 	}
 
 	totalPrice := 0.0
+
+	// -----------------------------
+	// Validate Inventory
+	// -----------------------------
 	for i, item := range cart.Items {
+
 		product, err := s.fetchProduct(item.ProductID.String())
 		if err != nil {
 			return nil, err
 		}
 
+		if item.Quantity > product.Product.Stock {
+			return nil, fmt.Errorf(
+				"insufficient stock for product %s",
+				product.Product.Name,
+			)
+		}
+
 		cart.Items[i].Price = product.Product.Price
+
 		cart.Items[i].Product = &models.Product{
 			ID:       item.ProductID,
 			Name:     product.Product.Name,
@@ -204,9 +219,30 @@ func (s *CartService) Checkout(c *gin.Context, userID string) (map[string]interf
 			Price:    product.Product.Price,
 			Stock:    product.Product.Stock,
 		}
+
 		totalPrice += product.Product.Price * float64(item.Quantity)
 	}
 
+	// -----------------------------
+	// Reduce Inventory
+	// -----------------------------
+	// for _, item := range cart.Items {
+
+	// 	err := s.reduceStock(
+
+	// 		item.ProductID.String(),
+	// 		item.Quantity,
+	// 	)
+
+	// 	if err != nil {
+	// 		log.Printf("reduce stock failed: %v", err)
+	// 		//return fmt.Errorf("failed to reduce stock: %w", err)
+	// 	}
+	// }
+
+	// -----------------------------
+	// Create Order
+	// -----------------------------
 	orderPayload := map[string]interface{}{
 		"user_id":     userID,
 		"items":       cart.Items,
@@ -219,10 +255,16 @@ func (s *CartService) Checkout(c *gin.Context, userID string) (map[string]interf
 		return nil, err
 	}
 
-	req, err := http.NewRequest(http.MethodPost, s.OrderSvcURL+"/api/v1/orders", bytes.NewBuffer(body))
+	req, err := http.NewRequest(
+		http.MethodPost,
+		s.OrderSvcURL+"/api/v1/orders",
+		bytes.NewBuffer(body),
+	)
+
 	if err != nil {
 		return nil, err
 	}
+
 	req.Header.Set("Content-Type", "application/json")
 
 	if authHeader := c.GetHeader("Authorization"); authHeader != "" {
@@ -231,8 +273,12 @@ func (s *CartService) Checkout(c *gin.Context, userID string) (map[string]interf
 
 	resp, err := s.HTTPClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to call order service: %w", err)
+		return nil, fmt.Errorf(
+			"failed to call order service: %w",
+			err,
+		)
 	}
+
 	defer resp.Body.Close()
 
 	bodyBytes, err := io.ReadAll(resp.Body)
@@ -240,20 +286,65 @@ func (s *CartService) Checkout(c *gin.Context, userID string) (map[string]interf
 		return nil, err
 	}
 
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		return nil, fmt.Errorf("failed to create order in order service: %s", string(bodyBytes))
+	if resp.StatusCode != http.StatusOK &&
+		resp.StatusCode != http.StatusCreated {
+
+		return nil, fmt.Errorf(
+			"failed to create order in order service: %s",
+			string(bodyBytes),
+		)
 	}
 
 	var orderResp map[string]interface{}
+
 	if err := json.Unmarshal(bodyBytes, &orderResp); err != nil {
 		return nil, err
 	}
 
+	// -----------------------------
+	// Clear Cart
+	// -----------------------------
 	if err := s.Repo.ClearCart(cart.ID); err != nil {
 		return nil, err
 	}
 
 	return orderResp, nil
+}
+
+func (s *CartService) reduceStock(productID string, quantity int) error {
+
+	payload := map[string]int{
+		"quantity": quantity,
+	}
+
+	body, _ := json.Marshal(payload)
+
+	req, err := http.NewRequest(
+		http.MethodPatch,
+		config.GetEnv("PRODUCT_SERVICE_URL", "http://localhost:8082")+
+			"/api/v1/products/"+productID+"/reduce-stock",
+		bytes.NewBuffer(body),
+	)
+
+	if err != nil {
+		return err
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := s.HTTPClient.Do(req)
+
+	if err != nil {
+		return err
+	}
+
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to reduce stock")
+	}
+
+	return nil
 }
 
 func (s *CartService) CalculateTotal(items []models.CartItem) float64 {
@@ -270,7 +361,7 @@ func (s *CartService) fetchProduct(productID string) (*productResponse, error) {
 		return nil, errors.New("PRODUCT_SERVICE_URL not configured")
 	}
 
-	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("%s/api/v1/products/%s", productServiceURL, productID), nil)
+	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("%s/products/%s", productServiceURL, productID), nil)
 	if err != nil {
 		return nil, err
 	}

@@ -1,17 +1,16 @@
 package main
 
 import (
+	"cart-service/internal/handler"
+	"cart-service/internal/models"
+	"cart-service/internal/repository"
+	"cart-service/internal/service"
+	"cart-service/pkg/config"
+	"cart-service/pkg/db"
+	"cart-service/pkg/logger"
+	"cart-service/pkg/middleware"
 	"log"
 	"os"
-
-	"ecommerce-backend/pkg/config"
-	"ecommerce-backend/pkg/db"
-	"ecommerce-backend/pkg/logger"
-	"ecommerce-backend/pkg/middleware"
-	"ecommerce-backend/services/cartservice/internal/handler"
-	"ecommerce-backend/services/cartservice/internal/models"
-	"ecommerce-backend/services/cartservice/internal/repository"
-	"ecommerce-backend/services/cartservice/internal/service"
 
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
@@ -19,22 +18,13 @@ import (
 
 func main() {
 
-	// -----------------------------------------
-	// 1. Init Logger
-	// -----------------------------------------
 	logger.Init()
 	defer logger.Sync()
 
-	// -----------------------------------------
-	// 2. Load Environment Variables (.env optional)
-	// -----------------------------------------
-	if err := godotenv.Load("../.env"); err != nil {
-		log.Println("⚠️  No .env found, continuing with system environment variables")
+	if err := godotenv.Load(".env"); err != nil {
+		log.Println("⚠️  No .env found, continuing with system environment variables cart service")
 	}
 
-	// -----------------------------------------
-	// 3. Database Setup
-	// -----------------------------------------
 	dsn := os.Getenv("DATABASE_DSN")
 	if dsn == "" {
 		log.Fatal("❌ DATABASE_DSN environment variable not set")
@@ -50,23 +40,17 @@ func main() {
 		log.Fatalf("❌ AutoMigrate failed: %v", err)
 	}
 
-	// -----------------------------------------
-	// 5. Dependency Injection
-	// -----------------------------------------
 	repo := repository.NewCartRepository(dbConn)
 	cartService := service.NewCartService(repo, config.GetEnv("ORDER_SERVICE_URL", "http://localhost:8083"))
 	cartHandler := handler.NewCartHandler(cartService)
 
-	// -----------------------------------------
-	// 6. Router Setup
-	// -----------------------------------------
 	router := gin.Default()
 
 	router.GET("/health", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "cartservice up"})
 	})
 
-	api := router.Group("/api/v1/cart")
+	api := router.Group("cart")
 	api.Use(middleware.JWTAuth())
 
 	{
@@ -77,10 +61,7 @@ func main() {
 		api.POST("/checkout", cartHandler.Checkout)
 	}
 
-	// -----------------------------------------
-	// 7. Start Server
-	// -----------------------------------------
-	port := config.GetEnv("PORT", "8085")
+	port := config.GetEnv("PORT", "8083")
 
 	log.Printf("🚀 CartService running on port %s", port)
 	router.Run(":" + port)

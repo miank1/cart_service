@@ -1,7 +1,7 @@
 package repository
 
 import (
-	"ecommerce-backend/services/cartservice/internal/models"
+	"cart-service/internal/models"
 
 	uuid "github.com/google/uuid"
 	"gorm.io/gorm"

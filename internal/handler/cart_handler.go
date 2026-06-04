@@ -1,9 +1,8 @@
 package handler
 
 import (
+	"cart-service/internal/service"
 	"net/http"
-
-	"ecommerce-backend/services/cartservice/internal/service"
 
 	"github.com/gin-gonic/gin"
 )
