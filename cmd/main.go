@@ -41,7 +41,7 @@ func main() {
 	}
 
 	repo := repository.NewCartRepository(dbConn)
-	cartService := service.NewCartService(repo, config.GetEnv("ORDER_SERVICE_URL", "http://localhost:8083"))
+	cartService := service.NewCartService(repo, config.GetEnv("ORDER_SERVICE_URL", "http://localhost:8084"))
 	cartHandler := handler.NewCartHandler(cartService)
 
 	router := gin.Default()
@@ -52,7 +52,6 @@ func main() {
 
 	api := router.Group("cart")
 	api.Use(middleware.JWTAuth())
-
 	{
 		api.POST("/items", cartHandler.AddItem)
 		api.GET("", cartHandler.GetCart)

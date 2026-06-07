@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"time"
@@ -224,28 +225,24 @@ func (s *CartService) Checkout(c *gin.Context, userID string) (map[string]interf
 	}
 
 	// -----------------------------
-	// Reduce Inventory
-	// -----------------------------
-	// for _, item := range cart.Items {
-
-	// 	err := s.reduceStock(
-
-	// 		item.ProductID.String(),
-	// 		item.Quantity,
-	// 	)
-
-	// 	if err != nil {
-	// 		log.Printf("reduce stock failed: %v", err)
-	// 		//return fmt.Errorf("failed to reduce stock: %w", err)
-	// 	}
-	// }
-
-	// -----------------------------
 	// Create Order
 	// -----------------------------
+	var orderItems []map[string]interface{}
+
+	for _, item := range cart.Items {
+
+		orderItems = append(orderItems, map[string]interface{}{
+			"product_id":   item.ProductID,
+			"product_name": item.Product.Name,
+			"category":     item.Product.Category,
+			"quantity":     item.Quantity,
+			"price":        item.Price,
+		})
+	}
+
 	orderPayload := map[string]interface{}{
 		"user_id":     userID,
-		"items":       cart.Items,
+		"items":       orderItems,
 		"status":      "pending",
 		"total_price": totalPrice,
 	}
@@ -257,13 +254,15 @@ func (s *CartService) Checkout(c *gin.Context, userID string) (map[string]interf
 
 	req, err := http.NewRequest(
 		http.MethodPost,
-		s.OrderSvcURL+"/api/v1/orders",
+		s.OrderSvcURL+"/orders",
 		bytes.NewBuffer(body),
 	)
 
 	if err != nil {
 		return nil, err
 	}
+
+	log.Println("Calling Order Service:", s.OrderSvcURL+"/orders")
 
 	req.Header.Set("Content-Type", "application/json")
 
@@ -286,8 +285,9 @@ func (s *CartService) Checkout(c *gin.Context, userID string) (map[string]interf
 		return nil, err
 	}
 
-	if resp.StatusCode != http.StatusOK &&
-		resp.StatusCode != http.StatusCreated {
+	fmt.Println("************************", string(bodyBytes))
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 
 		return nil, fmt.Errorf(
 			"failed to create order in order service: %s",
@@ -301,14 +301,11 @@ func (s *CartService) Checkout(c *gin.Context, userID string) (map[string]interf
 		return nil, err
 	}
 
-	// -----------------------------
-	// Clear Cart
-	// -----------------------------
 	if err := s.Repo.ClearCart(cart.ID); err != nil {
 		return nil, err
 	}
 
-	return orderResp, nil
+	return orderResp["order"].(map[string]interface{}), nil
 }
 
 func (s *CartService) reduceStock(productID string, quantity int) error {
