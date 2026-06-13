@@ -2,9 +2,9 @@ package service
 
 import (
 	"bytes"
-	"cart-service/internal/models"
-	"cart-service/internal/repository"
-	"cart-service/pkg/config"
+	"cart_service/internal/models"
+	"cart_service/internal/repository"
+
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,6 +16,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/miank1/ecommerce_backend/pkg/config"
 )
 
 type CartService struct {

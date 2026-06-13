@@ -1,7 +1,7 @@
 package handler
 
 import (
-	"cart-service/internal/service"
+	"cart_service/internal/service"
 	"net/http"
 
 	"github.com/gin-gonic/gin"

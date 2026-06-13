@@ -1,19 +1,20 @@
 package main
 
 import (
-	"cart-service/internal/handler"
-	"cart-service/internal/models"
-	"cart-service/internal/repository"
-	"cart-service/internal/service"
-	"cart-service/pkg/config"
-	"cart-service/pkg/db"
-	"cart-service/pkg/logger"
-	"cart-service/pkg/middleware"
+	"cart_service/internal/handler"
+	"cart_service/internal/models"
+	"cart_service/internal/repository"
+	"cart_service/internal/service"
 	"log"
 	"os"
 
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
+	"github.com/miank1/ecommerce_backend/pkg/config"
+	"github.com/miank1/ecommerce_backend/pkg/db"
+	"github.com/miank1/ecommerce_backend/pkg/logger"
+	"github.com/miank1/ecommerce_backend/pkg/middleware"
+	"github.com/miank1/ecommerce_backend/pkg/rabbitmq"
 )
 
 func main() {
@@ -49,6 +50,35 @@ func main() {
 	router.GET("/health", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "cartservice up"})
 	})
+
+	rabbit, err := rabbitmq.New(
+		config.GetEnv("RABBITMQ_URL", ""),
+	)
+	if err != nil {
+		log.Fatalf("❌ Failed to connect RabbitMQ: %v", err)
+	}
+	defer rabbit.Close()
+
+	_, err = rabbit.DeclareQueue("checkout_requested")
+	if err != nil {
+		log.Fatalf("❌ Failed to create queue: %v", err)
+	}
+
+	log.Println("✅ Queue Created")
+
+	err = rabbit.Publish(
+		"checkout_requested",
+		map[string]interface{}{
+			"user_id": "123",
+			"message": "checkout requested",
+		},
+	)
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	log.Println("✅ Message Published")
 
 	api := router.Group("cart")
 	api.Use(middleware.JWTAuth())
