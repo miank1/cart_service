@@ -17,20 +17,24 @@ import (
 	"github.com/miank1/ecommerce_backend/pkg/rabbitmq"
 )
 
+func LoadEnv() {
+	_ = godotenv.Load(".env")
+	_ = godotenv.Load("../.env")
+}
+
 func main() {
 
 	logger.Init()
 	defer logger.Sync()
 
-	if err := godotenv.Load(".env"); err != nil {
-		log.Println("⚠️  No .env found, continuing with system environment variables cart service")
-	}
+	LoadEnv()
 
 	dsn := os.Getenv("DATABASE_DSN")
 	if dsn == "" {
 		log.Fatal("❌ DATABASE_DSN environment variable not set")
 	}
 
+	// database
 	dbConn, err := db.InitDB(dsn)
 	if err != nil {
 		log.Fatalf("❌ Failed to connect to DB: %v", err)
@@ -41,22 +45,13 @@ func main() {
 		log.Fatalf("❌ AutoMigrate failed: %v", err)
 	}
 
-	repo := repository.NewCartRepository(dbConn)
-	cartService := service.NewCartService(repo, config.GetEnv("ORDER_SERVICE_URL", "http://localhost:8084"))
-	cartHandler := handler.NewCartHandler(cartService)
-
-	router := gin.Default()
-
-	router.GET("/health", func(c *gin.Context) {
-		c.JSON(200, gin.H{"status": "cartservice up"})
-	})
-
 	rabbit, err := rabbitmq.New(
 		config.GetEnv("RABBITMQ_URL", ""),
 	)
 	if err != nil {
-		log.Fatalf("❌ Failed to connect RabbitMQ: %v", err)
+		log.Fatal(err)
 	}
+
 	defer rabbit.Close()
 
 	_, err = rabbit.DeclareQueue("checkout_requested")
@@ -64,21 +59,21 @@ func main() {
 		log.Fatalf("❌ Failed to create queue: %v", err)
 	}
 
-	log.Println("✅ Queue Created")
+	log.Println("✅ Queue checkout_requested created")
 
-	err = rabbit.Publish(
-		"checkout_requested",
-		map[string]interface{}{
-			"user_id": "123",
-			"message": "checkout requested",
-		},
+	repo := repository.NewCartRepository(dbConn)
+	cartService := service.NewCartService(
+		repo,
+		rabbit,
 	)
+	cartHandler := handler.NewCartHandler(cartService)
 
-	if err != nil {
-		log.Fatal(err)
-	}
+	// router
+	router := gin.Default()
 
-	log.Println("✅ Message Published")
+	router.GET("/health", func(c *gin.Context) {
+		c.JSON(200, gin.H{"status": "cartservice up"})
+	})
 
 	api := router.Group("cart")
 	api.Use(middleware.JWTAuth())
@@ -93,5 +88,7 @@ func main() {
 	port := config.GetEnv("PORT", "8083")
 
 	log.Printf("🚀 CartService running on port %s", port)
-	router.Run(":" + port)
+	if err := router.Run(":" + port); err != nil {
+		log.Fatal(err)
+	}
 }

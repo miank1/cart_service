@@ -4,32 +4,34 @@ import (
 	"bytes"
 	"cart_service/internal/models"
 	"cart_service/internal/repository"
+	"log"
 
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"log"
 	"net/http"
 	"os"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/miank1/ecommerce_backend/pkg/config"
+	"github.com/miank1/ecommerce_backend/pkg/events"
+	"github.com/miank1/ecommerce_backend/pkg/rabbitmq"
 )
 
 type CartService struct {
 	Repo        *repository.CartRepository
+	Rabbit      *rabbitmq.RabbitMQ
 	OrderSvcURL string
 	HTTPClient  *http.Client
 }
 
-func NewCartService(repo *repository.CartRepository, orderSvcURL string) *CartService {
+func NewCartService(repo *repository.CartRepository, rabbit *rabbitmq.RabbitMQ) *CartService {
 	return &CartService{
 		Repo:        repo,
-		OrderSvcURL: orderSvcURL,
-		HTTPClient:  &http.Client{Timeout: 10 * time.Second},
+		Rabbit:      rabbit,
+		HTTPClient:  &http.Client{},
+		OrderSvcURL: os.Getenv("ORDER_SERVICE_URL"),
 	}
 }
 
@@ -195,9 +197,7 @@ func (s *CartService) Checkout(c *gin.Context, userID string) (map[string]interf
 
 	totalPrice := 0.0
 
-	// -----------------------------
 	// Validate Inventory
-	// -----------------------------
 	for i, item := range cart.Items {
 
 		product, err := s.fetchProduct(item.ProductID.String())
@@ -225,88 +225,41 @@ func (s *CartService) Checkout(c *gin.Context, userID string) (map[string]interf
 		totalPrice += product.Product.Price * float64(item.Quantity)
 	}
 
-	// -----------------------------
-	// Create Order
-	// -----------------------------
-	var orderItems []map[string]interface{}
+	// Build event
+	var eventItems []events.CheckoutItem
 
 	for _, item := range cart.Items {
-
-		orderItems = append(orderItems, map[string]interface{}{
-			"product_id":   item.ProductID,
-			"product_name": item.Product.Name,
-			"category":     item.Product.Category,
-			"quantity":     item.Quantity,
-			"price":        item.Price,
+		eventItems = append(eventItems, events.CheckoutItem{
+			ProductID:   item.ProductID.String(),
+			ProductName: item.Product.Name,
+			Category:    item.Product.Category,
+			Quantity:    item.Quantity,
+			Price:       item.Price,
 		})
 	}
 
-	orderPayload := map[string]interface{}{
-		"user_id":     userID,
-		"items":       orderItems,
-		"status":      "pending",
-		"total_price": totalPrice,
+	event := events.CheckoutRequested{
+		UserID:     userID,
+		Items:      eventItems,
+		TotalPrice: totalPrice,
 	}
 
-	body, err := json.Marshal(orderPayload)
+	// Publish event
+	err = s.Rabbit.Publish("checkout_requested", event)
 	if err != nil {
 		return nil, err
 	}
 
-	req, err := http.NewRequest(
-		http.MethodPost,
-		s.OrderSvcURL+"/orders",
-		bytes.NewBuffer(body),
-	)
+	log.Println("✅ checkout_requested event published")
 
-	if err != nil {
-		return nil, err
-	}
-
-	log.Println("Calling Order Service:", s.OrderSvcURL+"/orders")
-
-	req.Header.Set("Content-Type", "application/json")
-
-	if authHeader := c.GetHeader("Authorization"); authHeader != "" {
-		req.Header.Set("Authorization", authHeader)
-	}
-
-	resp, err := s.HTTPClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf(
-			"failed to call order service: %w",
-			err,
-		)
-	}
-
-	defer resp.Body.Close()
-
-	bodyBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	fmt.Println("************************", string(bodyBytes))
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-
-		return nil, fmt.Errorf(
-			"failed to create order in order service: %s",
-			string(bodyBytes),
-		)
-	}
-
-	var orderResp map[string]interface{}
-
-	if err := json.Unmarshal(bodyBytes, &orderResp); err != nil {
-		return nil, err
-	}
-
+	// Clear cart
 	if err := s.Repo.ClearCart(cart.ID); err != nil {
 		return nil, err
 	}
 
-	return orderResp["order"].(map[string]interface{}), nil
+	return map[string]interface{}{
+		"message": "checkout request submitted",
+	}, nil
 }
 
 func (s *CartService) reduceStock(productID string, quantity int) error {
