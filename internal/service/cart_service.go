@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"cart_service/internal/models"
 	"cart_service/internal/repository"
+	"io"
 	"log"
 
 	"encoding/json"
@@ -20,18 +21,20 @@ import (
 )
 
 type CartService struct {
-	Repo        *repository.CartRepository
-	Rabbit      *rabbitmq.RabbitMQ
-	OrderSvcURL string
-	HTTPClient  *http.Client
+	Repo          *repository.CartRepository
+	Rabbit        *rabbitmq.RabbitMQ
+	OrderSvcURL   string
+	HTTPClient    *http.Client
+	ProductSvcURL string
 }
 
 func NewCartService(repo *repository.CartRepository, rabbit *rabbitmq.RabbitMQ) *CartService {
 	return &CartService{
-		Repo:        repo,
-		Rabbit:      rabbit,
-		HTTPClient:  &http.Client{},
-		OrderSvcURL: os.Getenv("ORDER_SERVICE_URL"),
+		Repo:          repo,
+		Rabbit:        rabbit,
+		HTTPClient:    &http.Client{},
+		OrderSvcURL:   os.Getenv("ORDER_SERVICE_URL"),
+		ProductSvcURL: os.Getenv("PRODUCT_SERVICE_URL"),
 	}
 }
 
@@ -307,33 +310,44 @@ func (s *CartService) CalculateTotal(items []models.CartItem) float64 {
 }
 
 func (s *CartService) fetchProduct(productID string) (*productResponse, error) {
-	productServiceURL := os.Getenv("PRODUCT_SERVICE_URL")
-	if productServiceURL == "" {
-		return nil, errors.New("PRODUCT_SERVICE_URL not configured")
-	}
 
-	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("%s/products/%s", productServiceURL, productID), nil)
+	url := fmt.Sprintf("%s/products/%s", s.ProductSvcURL, productID)
+
+	log.Printf("Calling Product Service: %s", url)
+
+	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}
 
 	resp, err := s.HTTPClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch product info: %w", err)
+		return nil, fmt.Errorf("failed to call Product Service: %w", err)
 	}
 	defer resp.Body.Close()
 
+	fmt.Println("Response -----", resp)
+
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("product %s not found in product service", productID)
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf(
+			"product service returned %d: %s",
+			resp.StatusCode,
+			string(body),
+		)
 	}
 
 	var product productResponse
+
 	if err := json.NewDecoder(resp.Body).Decode(&product); err != nil {
-		return nil, fmt.Errorf("invalid product response: %w", err)
+		return nil, fmt.Errorf("failed to decode product response: %w", err)
 	}
+
 	if product.Product.ID == "" {
-		return nil, errors.New("unexpected product payload")
+		return nil, errors.New("product not found")
 	}
+
+	log.Println("Product ", product)
 
 	return &product, nil
 }
