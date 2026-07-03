@@ -313,7 +313,7 @@ func (s *CartService) fetchProduct(productID string) (*productResponse, error) {
 
 	url := fmt.Sprintf("%s/products/%s", s.ProductSvcURL, productID)
 
-	log.Printf("Calling Product Service: %s", url)
+	log.Println("Calling Product Service: ", url)
 
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
