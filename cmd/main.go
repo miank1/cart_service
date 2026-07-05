@@ -5,7 +5,6 @@ import (
 	"cart_service/internal/models"
 	"cart_service/internal/repository"
 	"cart_service/internal/service"
-	"fmt"
 	"log"
 	"os"
 
@@ -61,8 +60,6 @@ func main() {
 	}
 
 	log.Println("Queue checkout_requested created")
-
-	fmt.Println("Hello World from CART SERVICE ------------ &&&&&&&&&&x,cnvxvc jkjslkfdjkjdsklkj &&&&")
 
 	repo := repository.NewCartRepository(dbConn)
 	cartService := service.NewCartService(repo, rabbit)
